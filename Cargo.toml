@@ -1,6 +1,10 @@
 [package]
-name = "csd-tools"
+name = "csd"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+dirs = "6.0.0"
+reqwest = { version = "0.13.4", features = ["stream"] }
+tempfile = "3.27.0"
+tokio = { version = "1", features = ["full"] }

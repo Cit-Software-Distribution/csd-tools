@@ -1,0 +1,34 @@
+name: Relrease
+
+on:
+  push:
+    tags:
+      - v*.*.*
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Compilar programas
+        run: cargo build --release --workspace
+        
+      - name: Empacotar binários
+        run: |      
+          VERSION=${{ github.ref_name }}
+          mkdir -p dist
+          tar -czf dist/csd-${VERSION}-x86_64-linux.tar.gz \
+            -C target/release csd
+      - name: Criar releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          token: ${{ secrets.ORG_TOKEN }}
