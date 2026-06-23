@@ -25,7 +25,7 @@ jobs:
         run: |      
           VERSION=${{ github.ref_name }}
           mkdir -p dist
-          tar -czf dist/csd-${VERSION}-x86_64-linux.tar.gz \
+          tar -czf dist/csd-x86_64-linux.tar.gz \
             -C target/release csd
       - name: Criar releases
         uses: softprops/action-gh-release@v2
