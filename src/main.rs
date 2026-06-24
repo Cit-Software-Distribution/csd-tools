@@ -6,7 +6,7 @@ use serde_json::{self};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::error::Error;
-use std::fs::{self};
+use std::fs::{self, File};
 use std::io::{self, Read, Seek, Write};
 use std::process;
 use tar::Archive;
@@ -15,6 +15,7 @@ use tempfile::NamedTempFile;
 #[derive(Subcommand)]
 enum Commands {
     Install { package: String },
+    Update,
 }
 
 #[derive(Parser)]
@@ -26,14 +27,13 @@ struct Args {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Package {
-    version: String,
     url: String,
     checksum: String,
 }
 
 #[derive(Serialize, Deserialize)]
 struct Manifest {
-    programs: HashMap<String, Package>,
+    programs: HashMap<String, HashMap<String, Package>>,
 }
 
 async fn download_package(package: &Package) -> Result<NamedTempFile, Box<dyn Error>> {
@@ -43,6 +43,7 @@ async fn download_package(package: &Package) -> Result<NamedTempFile, Box<dyn Er
     });
     let mut tempfile = tempfile::NamedTempFile::new_in(cache_dir)?;
 
+    println!("Url {:?}", package.url);
     let response = reqwest::get(&package.url).await?;
 
     if !response.status().is_success() {
@@ -129,9 +130,8 @@ async fn execute_routine(package: &Package, name: &str) -> Result<(), Box<dyn Er
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    let args = Args::parse();
+async fn update_manifest() -> Result<(), Box<dyn Error>> {
+    println!("Updating packages...");
     let mut dir = dirs::data_local_dir().unwrap_or_else(|| {
         eprintln!("Couldn't find local DATA directory.");
         process::exit(1);
@@ -139,17 +139,81 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     dir.push("csd/manifest.json");
 
-    let content = fs::read_to_string(dir)?;
-    let manifest: Manifest = serde_json::from_str(&content)?;
+    let mut file = File::create(dir)?;
+
+    let response = reqwest::get(
+        "https://raw.githubusercontent.com/Cit-Software-Distribution/.github/refs/heads/main/manifest.json",
+    ).await?;
+
+    if !response.status().is_success() {
+        eprint!(
+            "Failed to download manifest: server reponse status {}",
+            response.status()
+        );
+        process::exit(1);
+    }
+
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunck_result) = stream.next().await {
+        let chunck = chunck_result?;
+        file.write_all(&chunck)?;
+    }
+
+    file.flush()?;
+    println!("successfully updated manifest.");
+
+    Ok(())
+}
+
+fn load_manifest() -> Result<Manifest, String> {
+    let mut dir = dirs::data_local_dir().unwrap_or_else(|| {
+        eprintln!("Couldn't find local DATA directory.");
+        process::exit(1);
+    });
+
+    dir.push("csd/manifest.json");
+
+    let content = fs::read_to_string(&dir).map_err(|err| {
+        format!(
+            "Couldn't read file 'manifest.json' at {:?}. Details: {:?}",
+            dir, err
+        )
+    })?;
+
+    let manifest = serde_json::from_str(&content).map_err(|err| {
+        format!(
+            "File 'manifest.json' is corrupted or has invalid syntax. Error: {}",
+            err
+        )
+    })?;
+
+    Ok(manifest)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let args = Args::parse();
 
     match &args.command {
         Commands::Install { package } => {
-            if let Some(p) = manifest.programs.get(package) {
+            let manifest = load_manifest()?;
+            if let Some(versions) = manifest.programs.get(package) {
                 println!("Package {package:?} was found");
-                execute_routine(p, package).await?;
+
+                if let Some(latest_package) = versions.keys().max() {
+                    let data = &versions[latest_package];
+                    execute_routine(data, package).await?;
+                } else {
+                    eprintln!("Couldn't find latest version for package {package:?}");
+                }
             } else {
-                println!("Package {package:?} wasn't found");
+                eprintln!("Package {package:?} wasn't found");
+                process::exit(1);
             }
+        }
+        Commands::Update => {
+            update_manifest().await?;
         }
     }
     Ok(())
